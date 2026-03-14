@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Portfolio Ledger</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #f5f2ec; font-family: 'Hiragino Mincho ProN','Yu Mincho',serif; color: #1a1814; }
+select,input,button { font-family: inherit; }
+button { transition: opacity 0.15s; }
+button:hover { opacity: 0.75; }
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: #ede9e0; }
+::-webkit-scrollbar-thumb { background: #c8c4bc; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+const storage = {
+  get: async k => { const v = localStorage.getItem(k); return v ? {value:v} : null; },
+  set: async (k,v) => { localStorage.setItem(k,v); return {value:v}; },
+};
+
+const T = {
+  paper:'#f5f2ec', ink:'#1a1814', inkMid:'#4a4640',
+  inkLight:'#9a9690', inkGhost:'#d0ccc4',
+  rule:'#c8c4bc', ruleLight:'#e0ddd8',
+  red:'#c0392b', green:'#2d7a5a',
+  cats:{ 現金預金:'#2c5f8a', 投資:'#2d7a5a', 不動産:'#7a4a2d', 事業資産:'#5a2d7a', 仮想通貨:'#b8860b', その他:'#6a6a7a', 負債:'#c0392b' },
+};
+
+const CATS  = ['現金預金','投資','不動産','事業資産','仮想通貨','その他','負債'];
+const CURRS = ['JPY','USD','EUR','BTC','ETH','その他'];
+const RATES0 = {JPY:1,USD:150,EUR:163,BTC:14000000,ETH:450000,その他:1};
+
+const INIT = [
+  {id:1,category:'現金預金',name:'三菱UFJ 普通',        amount:1200000,currency:'JPY',note:'生活口座'},
+  {id:2,category:'現金預金',name:'楽天銀行',             amount:800000, currency:'JPY',note:'深薫堂用'},
+  {id:3,category:'投資',    name:'eMAXIS Slim 全世界株', amount:2500000,currency:'JPY',note:'NISA'},
+  {id:4,category:'投資',    name:'iDeCo',                amount:980000, currency:'JPY',note:''},
+  {id:5,category:'不動産',  name:'仙台底地物件',          amount:8000000,currency:'JPY',note:'非再建築',cfIncome:48000,cfExpense:5000},
+  {id:6,category:'事業資産',name:'深薫堂 在庫',          amount:320000, currency:'JPY',note:'コーヒー豆'},
+  {id:7,category:'事業資産',name:'深薫堂 設備',          amount:450000, currency:'JPY',note:'焙煎機'},
+  {id:8,category:'仮想通貨',name:'Bitcoin',              amount:0.05,   currency:'BTC',note:'長期保有'},
+  {id:9,category:'負債',    name:'クレジット残債',        amount:-120000,currency:'JPY',note:''},
+];
+
+const fmt  = n => new Intl.NumberFormat('ja-JP',{style:'currency',currency:'JPY',maximumFractionDigits:0}).format(n);
+const fmtS = n => { const a=Math.abs(n); if(a>=100000000) return (n/100000000).toFixed(2)+'億円'; if(a>=10000) return (n/10000).toFixed(1)+'万円'; return fmt(n); };
+const jpy  = (a,c,r) => a*(r[c]||1);
+const nid  = arr => Math.max(0,...arr.map(a=>a.id))+1;
+
+function Donut({data,size=180}) {
+  const cx=size/2,cy=size/2,R=size*0.44,r=size*0.28;
+  const total=data.reduce((s,d)=>s+d.value,0);
+  if(!total) return null;
+  let angle=-Math.PI/2;
+  const slices=data.map(d=>{
+    const sw=(d.value/total)*2*Math.PI;
+    const x1=cx+R*Math.cos(angle),y1=cy+R*Math.sin(angle);
+    angle+=sw;
+    const x2=cx+R*Math.cos(angle),y2=cy+R*Math.sin(angle);
+    const xi1=cx+r*Math.cos(angle-sw),yi1=cy+r*Math.sin(angle-sw);
+    const xi2=cx+r*Math.cos(angle),yi2=cy+r*Math.sin(angle);
+    const lg=sw>Math.PI?1:0;
+    return {d:`M${x1},${y1} A${R},${R},0,${lg},1,${x2},${y2} L${xi2},${yi2} A${r},${r},0,${lg},0,${xi1},${yi1} Z`,color:d.color};
+  });
+  return <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>{slices.map((s,i)=><path key={i} d={s.d} fill={s.color} stroke={T.paper} strokeWidth={1.5}/>)}</svg>;
+}
+
+function AreaChart({data}) {
+  if(data.length<2) return null;
+  const W=600,H=180,pl=72,pr=16,pt=16,pb=32;
+  const iW=W-pl-pr,iH=H-pt-pb;
+  const vals=data.map(d=>d.netWorth);
+  const mn=Math.min(...vals),mx=Math.max(...vals),rng=mx-mn||1;
+  const px=i=>pl+(i/(data.length-1))*iW;
+  const py=v=>pt+iH-((v-mn)/rng)*iH;
+  const pts=data.map((d,i)=>px(i)+','+py(d.netWorth)).join(' ');
+  const area='M'+px(0)+','+py(data[0].netWorth)+' '+data.map((d,i)=>'L'+px(i)+','+py(d.netWorth)).join(' ')+' L'+px(data.length-1)+','+(pt+iH)+' L'+px(0)+','+(pt+iH)+' Z';
+  return (
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{display:'block'}}>
+      <defs><linearGradient id="ag" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.ink} stopOpacity="0.12"/><stop offset="100%" stopColor={T.ink} stopOpacity="0"/></linearGradient></defs>
+      {[0,1,2,3,4].map(i=>{const v=mn+(rng/4)*i;const y=py(v);return <g key={i}><line x1={pl} x2={pl+iW} y1={y} y2={y} stroke={T.ruleLight} strokeWidth={0.5}/><text x={pl-6} y={y+4} textAnchor="end" fontSize="9" fill={T.inkLight}>{fmtS(v)}</text></g>;})}
+      {data.map((d,i)=><text key={i} x={px(i)} y={pt+iH+16} textAnchor="middle" fontSize="9" fill={T.inkLight}>{d.date.slice(5)}</text>)}
+      <path d={area} fill="url(#ag)"/>
+      <polyline points={pts} fill="none" stroke={T.ink} strokeWidth={1.5}/>
+      {data.map((d,i)=><circle key={i} cx={px(i)} cy={py(d.netWorth)} r={3} fill={T.ink}/>)}
+    </svg>
+  );
+}
+
+function MiniBar({ratio,color}) {
+  return <div style={{height:2,background:T.ruleLight,borderRadius:1,flex:1}}><div style={{height:'100%',width:Math.min(ratio*100,100)+'%',background:color,borderRadius:1,transition:'width 0.5s'}}/></div>;
+}
+
+function AssetModal({asset,onSave,onClose}) {
+  const [form,setForm]=useState(asset||{category:'現金預金',name:'',amount:0,currency:'JPY',note:'',cfIncome:0,cfExpense:0});
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const L={fontSize:10,letterSpacing:'0.14em',color:T.inkLight,textTransform:'uppercase',display:'block',marginBottom:6};
+  const I={border:'none',borderBottom:'1px solid '+T.rule,background:'transparent',padding:'8px 0',fontSize:14,color:T.ink,outline:'none',width:'100%',fontFamily:'inherit'};
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(245,242,236,0.9)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:200}}>
+      <div style={{background:T.paper,border:'1px solid '+T.rule,width:420,maxWidth:'92vw',padding:'36px 32px',maxHeight:'90vh',overflowY:'auto'}}>
+        <p style={{margin:'0 0 24px',fontSize:11,letterSpacing:'0.18em',color:T.inkMid,textTransform:'uppercase'}}>{asset&&asset.id?'— EDIT —':'— NEW ASSET —'}</p>
+        <div style={{display:'flex',flexDirection:'column',gap:18}}>
+          <div><label style={L}>Category</label><select value={form.category} onChange={e=>set('category',e.target.value)} style={Object.assign({},I,{cursor:'pointer'})}>{CATS.map(c=><option key={c}>{c}</option>)}</select></div>
+          <div><label style={L}>Name</label><input value={form.name} onChange={e=>set('name',e.target.value)} style={I} placeholder="資産名称"/></div>
+          <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:16}}>
+            <div><label style={L}>Amount</label><input type="number" value={form.amount} onChange={e=>set('amount',parseFloat(e.target.value)||0)} style={I}/></div>
+            <div><label style={L}>Currency</label><select value={form.currency} onChange={e=>set('currency',e.target.value)} style={Object.assign({},I,{cursor:'pointer'})}>{CURRS.map(c=><option key={c}>{c}</option>)}</select></div>
+          </div>
+          <div><label style={L}>Note</label><input value={form.note} onChange={e=>set('note',e.target.value)} style={I} placeholder="任意"/></div>
+          {form.category==='不動産'&&<div style={{borderTop:'1px solid '+T.ruleLight,paddingTop:18}}>
+            <p style={Object.assign({},L,{marginBottom:14})}>CF / Month</p>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+              <div><label style={Object.assign({},L,{color:T.green})}>収入 (¥)</label><input type="number" value={form.cfIncome||0} onChange={e=>set('cfIncome',parseFloat(e.target.value)||0)} style={Object.assign({},I,{borderBottomColor:T.green})}/></div>
+              <div><label style={Object.assign({},L,{color:T.red})}>支出 (¥)</label><input type="number" value={form.cfExpense||0} onChange={e=>set('cfExpense',parseFloat(e.target.value)||0)} style={Object.assign({},I,{borderBottomColor:T.red})}/></div>
+            </div>
+          </div>}
+        </div>
+        <div style={{display:'flex',justifyContent:'flex-end',gap:10,marginTop:28}}>
+          <button onClick={onClose} style={{background:'none',border:'1px solid '+T.rule,color:T.inkMid,padding:'9px 20px',cursor:'pointer',fontSize:11}}>Cancel</button>
+          <button onClick={()=>onSave(form)} style={{background:T.ink,border:'none',color:T.paper,padding:'9px 24px',cursor:'pointer',fontSize:11,letterSpacing:'0.08em'}}>Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RatesModal({rates,onSave,onClose}) {
+  const [local,setLocal]=useState(Object.assign({},rates));
+  const I={border:'none',borderBottom:'1px solid '+T.rule,background:'transparent',padding:'6px 0',fontSize:14,color:T.ink,outline:'none',flex:1,fontFamily:'inherit'};
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(245,242,236,0.9)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:200}}>
+      <div style={{background:T.paper,border:'1px solid '+T.rule,width:340,padding:'32px 28px'}}>
+        <p style={{margin:'0 0 22px',fontSize:11,letterSpacing:'0.18em',color:T.inkMid,textTransform:'uppercase'}}>— Exchange Rates —</p>
+        {Object.keys(local).filter(k=>k!=='JPY').map(k=>(
+          <div key={k} style={{display:'flex',alignItems:'center',gap:14,marginBottom:14}}>
+            <span style={{fontSize:11,color:T.inkLight,width:32}}>{k}</span>
+            <input type="number" value={local[k]} onChange={e=>setLocal(l=>Object.assign({},l,{[k]:parseFloat(e.target.value)||1}))} style={I}/>
+            <span style={{fontSize:11,color:T.inkLight}}>円</span>
+          </div>
+        ))}
+        <div style={{display:'flex',justifyContent:'flex-end',gap:10,marginTop:22}}>
+          <button onClick={onClose} style={{background:'none',border:'1px solid '+T.rule,color:T.inkMid,padding:'8px 16px',cursor:'pointer',fontSize:11}}>Cancel</button>
+          <button onClick={()=>onSave(local)} style={{background:T.ink,border:'none',color:T.paper,padding:'8px 20px',cursor:'pointer',fontSize:11}}>Apply</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [assets,setAssets]=useState(INIT);
+  const [rates,setRates]=useState(RATES0);
+  const [snaps,setSnaps]=useState([]);
+  const [tab,setTab]=useState('overview');
+  const [openCat,setOpenCat]=useState(null);
+  const [modal,setModal]=useState(null);
+  const [loaded,setLoaded]=useState(false);
+  const [toast,setToast]=useState('');
+
+  useEffect(()=>{
+    (async()=>{
+      try{const a=await storage.get('pl_a');if(a)setAssets(JSON.parse(a.value));}catch(e){}
+      try{const r=await storage.get('pl_r');if(r)setRates(JSON.parse(r.value));}catch(e){}
+      try{const s=await storage.get('pl_s');if(s)setSnaps(JSON.parse(s.value));}catch(e){}
+      setLoaded(true);
+    })();
+  },[]);
+
+  const persist=useCallback(async(a,r,s)=>{
+    try{await storage.set('pl_a',JSON.stringify(a));}catch(e){}
+    try{await storage.set('pl_r',JSON.stringify(r));}catch(e){}
+    try{await storage.set('pl_s',JSON.stringify(s));}catch(e){}
+  },[]);
+  useEffect(()=>{if(loaded)persist(assets,rates,snaps);},[assets,rates,snaps,loaded]);
+
+  const jpyV=a=>jpy(a.amount,a.currency,rates);
+  const totA=assets.filter(a=>a.category!=='負債').reduce((s,a)=>s+jpyV(a),0);
+  const totD=Math.abs(assets.filter(a=>a.category==='負債').reduce((s,a)=>s+jpyV(a),0));
+  const net=totA-totD;
+  const cfIn=assets.reduce((s,a)=>s+(a.cfIncome||0),0);
+  const cfEx=assets.reduce((s,a)=>s+(a.cfExpense||0),0);
+  const cfNet=cfIn-cfEx;
+  const catTotals=CATS.map(c=>({name:c,value:Math.abs(assets.filter(a=>a.category===c).reduce((s,a)=>s+jpyV(a),0)),color:T.cats[c]})).filter(d=>d.value>0);
+
+  const saveSnap=()=>{
+    const date=new Date().toLocaleDateString('ja-JP',{year:'numeric',month:'2-digit'});
+    const upd=[...snaps.filter(s=>s.date!==date),{date,netWorth:net,totalAssets:totA,totalDebt:totD}].sort((a,b)=>a.date.localeCompare(b.date));
+    setSnaps(upd);setToast('記録しました');setTimeout(()=>setToast(''),2200);
+  };
+
+  const saveAsset=form=>{setAssets(p=>form.id?p.map(a=>a.id===form.id?form:a):[...p,Object.assign({},form,{id:nid(p)})]);setModal(null);};
+  const exportCSV=()=>{
+    const rows=[['カテゴリ','名称','円換算','通貨','元金額','メモ'],...assets.map(a=>[a.category,a.name,Math.round(jpyV(a)),a.currency,a.amount,a.note])];
+    const blob=new Blob(['\uFEFF'+rows.map(r=>r.join(',')).join('\n')],{type:'text/csv'});
+    Object.assign(document.createElement('a'),{href:URL.createObjectURL(blob),download:'資産_'+new Date().toLocaleDateString('ja-JP')+'.csv'}).click();
+  };
+
+  const NAV=[{id:'overview',label:'Overview'},{id:'assets',label:'Assets'},{id:'cf',label:'Cash Flow'},{id:'history',label:'History'}];
+  if(!loaded) return React.createElement('div',{style:{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',color:T.inkLight}},'Loading…');
+
+  return (
+    <div style={{background:T.paper,minHeight:'100vh',position:'relative'}}>
+      <div style={{position:'fixed',inset:0,pointerEvents:'none',zIndex:0,backgroundImage:'linear-gradient('+T.ruleLight+' 1px,transparent 1px),linear-gradient(90deg,'+T.ruleLight+' 1px,transparent 1px)',backgroundSize:'40px 40px',opacity:0.4}}/>
+
+      <header style={{position:'sticky',top:0,zIndex:50,background:T.paper,borderBottom:'1px solid '+T.rule,padding:'0 24px'}}>
+        <div style={{maxWidth:1000,margin:'0 auto',display:'flex',alignItems:'stretch',justifyContent:'space-between',height:52}}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <svg width="18" height="18" viewBox="0 0 20 20"><rect x="1" y="1" width="18" height="18" fill="none" stroke={T.ink} strokeWidth="1"/><line x1="1" y1="10" x2="19" y2="10" stroke={T.inkLight} strokeWidth="0.5"/><line x1="10" y1="1" x2="10" y2="19" stroke={T.inkLight} strokeWidth="0.5"/><circle cx="10" cy="10" r="3" fill={T.ink}/></svg>
+            <span style={{fontSize:12,letterSpacing:'0.18em',textTransform:'uppercase'}}>Portfolio Ledger</span>
+          </div>
+          <nav style={{display:'flex',alignItems:'stretch'}}>
+            {NAV.map(n=><button key={n.id} onClick={()=>setTab(n.id)} style={{background:'none',border:'none',borderBottom:tab===n.id?'2px solid '+T.ink:'2px solid transparent',color:tab===n.id?T.ink:T.inkLight,padding:'0 16px',cursor:'pointer',fontSize:10,letterSpacing:'0.14em',textTransform:'uppercase'}}>{n.label}</button>)}
+          </nav>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <button onClick={()=>setModal({type:'rates'})} style={{background:'none',border:'1px solid '+T.rule,color:T.inkMid,padding:'5px 12px',cursor:'pointer',fontSize:10}}>FX</button>
+            <button onClick={exportCSV} style={{background:'none',border:'1px solid '+T.rule,color:T.inkMid,padding:'5px 12px',cursor:'pointer',fontSize:10}}>CSV</button>
+          </div>
+        </div>
+      </header>
+
+      <main style={{maxWidth:1000,margin:'0 auto',padding:'40px 24px',position:'relative',zIndex:1}}>
+
+        {tab==='overview'&&<div>
+          <div style={{marginBottom:48}}>
+            <p style={{fontSize:9,letterSpacing:'0.22em',color:T.inkLight,textTransform:'uppercase',margin:'0 0 10px'}}>Net Worth</p>
+            <div style={{display:'flex',alignItems:'baseline',gap:14,flexWrap:'wrap'}}>
+              <span style={{fontSize:48,fontWeight:300,letterSpacing:'-0.02em',lineHeight:1}}>{fmtS(net)}</span>
+              {snaps.length>=2&&(function(){const prev=snaps[snaps.length-2];const diff=net-prev.netWorth;return React.createElement('span',{style:{fontSize:15,color:diff>=0?T.green:T.red}},(diff>=0?'+':'')+fmtS(diff));})()}
+            </div>
+            <div style={{display:'flex',gap:28,marginTop:18,flexWrap:'wrap'}}>
+              {[['Total Assets',totA,T.inkMid],['Total Debt',totD,T.red],['Monthly CF',cfNet,cfNet>=0?T.green:T.red]].map(function(item){return(
+                <div key={item[0]}><p style={{fontSize:9,letterSpacing:'0.15em',color:T.inkLight,margin:'0 0 4px',textTransform:'uppercase'}}>{item[0]}</p><p style={{fontSize:18,color:item[2],margin:0,fontWeight:300}}>{fmtS(item[1])}</p></div>
+              );})}
+            </div>
+          </div>
+          <div style={{borderTop:'1px solid '+T.rule,marginBottom:36}}/>
+          <div style={{display:'grid',gridTemplateColumns:'1fr auto',gap:40,alignItems:'start'}}>
+            <div>
+              <p style={{fontSize:9,letterSpacing:'0.22em',color:T.inkLight,textTransform:'uppercase',margin:'0 0 18px'}}>Allocation</p>
+              {catTotals.map(d=>(
+                <div key={d.name} style={{marginBottom:13}}>
+                  <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:5}}>
+                    <div style={{width:7,height:7,background:d.color,flexShrink:0}}/>
+                    <span style={{fontSize:12,color:T.inkMid,flex:1}}>{d.name}</span>
+                    <span style={{fontSize:12,color:T.ink}}>{fmtS(d.value)}</span>
+                    <span style={{fontSize:10,color:T.inkLight,width:34,textAlign:'right'}}>{((d.value/totA)*100).toFixed(1)}%</span>
+                  </div>
+                  <MiniBar ratio={d.value/totA} color={d.color}/>
+                </div>
+              ))}
+            </div>
+            <Donut data={catTotals} size={180}/>
+          </div>
+          <div style={{borderTop:'1px solid '+T.rule,margin:'36px 0'}}/>
+          <div style={{display:'flex',alignItems:'center',gap:14}}>
+            <button onClick={saveSnap} style={{background:'none',border:'1px solid '+T.ink,color:T.ink,padding:'10px 26px',cursor:'pointer',fontSize:10,letterSpacing:'0.12em',textTransform:'uppercase'}}>Record Snapshot</button>
+            {toast&&<span style={{fontSize:11,color:T.green}}>✓ {toast}</span>}
+          </div>
+        </div>}
+
+        {tab==='assets'&&<div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:28}}>
+            <p style={{fontSize:9,letterSpacing:'0.22em',color:T.inkLight,textTransform:'uppercase'}}>Asset Registry</p>
+            <button onClick={()=>setModal({type:'asset',asset:null})} style={{background:T.ink,border:'none',color:T.paper,padding:'8px 20px',cursor:'pointer',fontSize:10,letterSpacing:'0.1em',textTransform:'uppercase'}}>+ Add</button>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'3fr 2fr 1fr 80px',gap:12,padding:'8px 0',borderBottom:'1px solid '+T.rule}}>
+            {['Name','Amount','Currency',''].map(h=><span key={h} style={{fontSize:9,letterSpacing:'0.14em',color:T.inkLight,textTransform:'uppercase'}}>{h}</span>)}
+          </div>
+          {CATS.map(cat=>{
+            const ca=assets.filter(a=>a.category===cat);
+            if(!ca.length) return null;
+            const ct=ca.reduce((s,a)=>s+jpyV(a),0);
+            const open=openCat===cat;
+            const col=T.cats[cat];
+            return <div key={cat}>
+              <button onClick={()=>setOpenCat(open?null:cat)} style={{width:'100%',background:'none',border:'none',borderBottom:'1px solid '+T.ruleLight,padding:'13px 0',cursor:'pointer',display:'grid',gridTemplateColumns:'3fr 2fr 1fr 80px',gap:12,alignItems:'center',textAlign:'left'}}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <div style={{width:3,height:13,background:col,flexShrink:0}}/>
+                  <span style={{fontSize:11,letterSpacing:'0.06em',color:T.inkMid,textTransform:'uppercase'}}>{cat}</span>
+                  <span style={{fontSize:10,color:T.inkGhost}}>({ca.length})</span>
+                </div>
+                <span style={{fontSize:13,color:cat==='負債'?T.red:T.ink}}>{fmt(Math.abs(ct))}</span>
+                <span style={{fontSize:10,color:T.inkLight}}>JPY</span>
+                <span style={{fontSize:10,color:T.inkLight}}>{open?'▲':'▼'}</span>
+              </button>
+              {open&&ca.map(a=>(
+                <div key={a.id} style={{display:'grid',gridTemplateColumns:'3fr 2fr 1fr 80px',gap:12,alignItems:'center',padding:'10px 0 10px 11px',borderBottom:'1px solid '+T.ruleLight,background:col+'06'}}>
+                  <div>
+                    <p style={{margin:0,fontSize:12,color:T.ink}}>{a.name}</p>
+                    <div style={{display:'flex',gap:10,marginTop:3}}>
+                      {a.note&&<span style={{fontSize:10,color:T.inkLight}}>{a.note}</span>}
+                      {a.cfIncome>0&&<span style={{fontSize:10,color:T.green}}>+{fmt(a.cfIncome)}/月</span>}
+                      {a.cfExpense>0&&<span style={{fontSize:10,color:T.red}}>−{fmt(a.cfExpense)}/月</span>}
+                    </div>
+                  </div>
+                  <div>
+                    <p style={{margin:0,fontSize:12,color:T.ink}}>{a.currency==='JPY'?fmt(a.amount):fmt(jpy(a.amount,a.currency,rates))}</p>
+                    {a.currency!=='JPY'&&<p style={{margin:0,fontSize:10,color:T.inkLight}}>{a.amount} {a.currency}</p>}
+                  </div>
+                  <span style={{fontSize:10,color:T.inkLight}}>{a.currency}</span>
+                  <div style={{display:'flex',gap:6}}>
+                    <button onClick={()=>setModal({type:'asset',asset:a})} style={{background:'none',border:'1px solid '+T.rule,color:T.inkMid,padding:'3px 8px',cursor:'pointer',fontSize:10}}>Edit</button>
+                    <button onClick={()=>{if(confirm('削除しますか？'))setAssets(p=>p.filter(x=>x.id!==a.id));}} style={{background:'none',border:'1px solid '+T.rule,color:T.red,padding:'3px 6px',cursor:'pointer',fontSize:10}}>×</button>
+                  </div>
+                </div>
+              ))}
+              {open&&<button onClick={()=>setModal({type:'asset',asset:{category:cat}})} style={{width:'100%',background:'none',border:'none',borderBottom:'1px solid '+T.ruleLight,padding:'9px 11px',cursor:'pointer',textAlign:'left',fontSize:10,color:T.inkLight}}>+ {cat}を追加</button>}
+            </div>;
+          })}
+        </div>}
+
+        {tab==='cf'&&<div>
+          <p style={{fontSize:9,letterSpacing:'0.22em',color:T.inkLight,textTransform:'uppercase',margin:'0 0 28px'}}>Cash Flow — Monthly</p>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:1,background:T.rule,border:'1px solid '+T.rule,marginBottom:36}}>
+            {[['Income',cfIn,T.green],['Expense',cfEx,T.red],['Net CF',cfNet,cfNet>=0?T.green:T.red]].map(function(item){return(
+              <div key={item[0]} style={{background:T.paper,padding:'22px 24px'}}>
+                <p style={{fontSize:9,letterSpacing:'0.18em',color:T.inkLight,textTransform:'uppercase',margin:'0 0 8px'}}>{item[0]}</p>
+                <p style={{fontSize:26,color:item[2],margin:'0 0 4px',fontWeight:300}}>{fmtS(item[1])}</p>
+                <p style={{fontSize:10,color:T.inkLight}}>年換算 {fmtS(item[1]*12)}</p>
+              </div>
+            );})}
+          </div>
+          <div style={{borderTop:'1px solid '+T.rule}}>
+            <div style={{display:'grid',gridTemplateColumns:'3fr 1fr 1fr 1fr',gap:12,padding:'9px 0',borderBottom:'1px solid '+T.rule}}>
+              {['Property','収入','支出','Net'].map(h=><span key={h} style={{fontSize:9,letterSpacing:'0.14em',color:T.inkLight,textTransform:'uppercase'}}>{h}</span>)}
+            </div>
+            {assets.filter(a=>a.cfIncome||a.cfExpense).length===0
+              ?<p style={{padding:'22px 0',color:T.inkLight,fontSize:12}}>不動産資産にCFを入力してください。</p>
+              :assets.filter(a=>a.cfIncome||a.cfExpense).map(a=>{
+                const n=(a.cfIncome||0)-(a.cfExpense||0);
+                return <div key={a.id} style={{display:'grid',gridTemplateColumns:'3fr 1fr 1fr 1fr',gap:12,padding:'12px 0',borderBottom:'1px solid '+T.ruleLight,alignItems:'center'}}>
+                  <div><p style={{margin:0,fontSize:12,color:T.ink}}>{a.name}</p>{a.note&&<p style={{margin:0,fontSize:10,color:T.inkLight}}>{a.note}</p>}</div>
+                  <span style={{fontSize:12,color:T.green}}>{fmt(a.cfIncome||0)}</span>
+                  <span style={{fontSize:12,color:T.red}}>−{fmt(a.cfExpense||0)}</span>
+                  <span style={{fontSize:12,color:n>=0?T.green:T.red,fontWeight:500}}>{fmt(n)}</span>
+                </div>;
+              })
+            }
+          </div>
+        </div>}
+
+        {tab==='history'&&<div>
+          <p style={{fontSize:9,letterSpacing:'0.22em',color:T.inkLight,textTransform:'uppercase',margin:'0 0 28px'}}>Historical Record</p>
+          {snaps.length<2
+            ?<div style={{border:'1px solid '+T.ruleLight,padding:'44px 0',textAlign:'center'}}>
+              <p style={{color:T.inkLight,fontSize:12}}>2件以上の記録が必要です。</p>
+              <p style={{color:T.inkGhost,fontSize:11,marginTop:6}}>現在 {snaps.length} 件</p>
+            </div>
+            :<div style={{marginBottom:36,overflowX:'auto'}}><AreaChart data={snaps}/></div>
+          }
+          <div style={{borderTop:'1px solid '+T.rule}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:12,padding:'9px 0',borderBottom:'1px solid '+T.rule}}>
+              {['Date','Net Worth','Total Assets','Total Debt'].map(h=><span key={h} style={{fontSize:9,letterSpacing:'0.14em',color:T.inkLight,textTransform:'uppercase'}}>{h}</span>)}
+            </div>
+            {[...snaps].reverse().map((s,i)=>{
+              const prev=[...snaps].reverse()[i+1];
+              const diff=prev?s.netWorth-prev.netWorth:null;
+              return <div key={s.date} style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:12,padding:'12px 0',borderBottom:'1px solid '+T.ruleLight,alignItems:'center'}}>
+                <span style={{fontSize:11,color:T.inkMid}}>{s.date}</span>
+                <div><span style={{fontSize:12,color:T.ink}}>{fmt(s.netWorth)}</span>{diff!==null&&<span style={{fontSize:10,color:diff>=0?T.green:T.red,marginLeft:8}}>{(diff>=0?'+':'')+fmtS(diff)}</span>}</div>
+                <span style={{fontSize:12,color:T.inkMid}}>{fmt(s.totalAssets)}</span>
+                <span style={{fontSize:12,color:T.red}}>−{fmt(s.totalDebt)}</span>
+              </div>;
+            })}
+          </div>
+        </div>}
+
+      </main>
+
+      {modal&&modal.type==='asset'&&<AssetModal asset={modal.asset} onSave={saveAsset} onClose={()=>setModal(null)}/>}
+      {modal&&modal.type==='rates'&&<RatesModal rates={rates} onSave={r=>{setRates(r);setModal(null);}} onClose={()=>setModal(null)}/>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+</script>
+</body>
+</html>
